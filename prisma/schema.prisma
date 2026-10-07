@@ -14,6 +14,29 @@ enum Currency {
   BRL
 }
 
+enum ConversationRole {
+  USER
+  ASSISTANT
+}
+
+model Conversation {
+  id        String                @id @default(uuid()) @db.Uuid
+  createdAt DateTime              @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime              @updatedAt @db.Timestamptz(3)
+  messages  ConversationMessage[]
+}
+
+model ConversationMessage {
+  id             String           @id @default(uuid()) @db.Uuid
+  conversationId String           @db.Uuid
+  role           ConversationRole
+  content        String
+  createdAt      DateTime         @default(now()) @db.Timestamptz(3)
+  conversation   Conversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt, id])
+}
+
 model Expense {
   id              String   @id @default(uuid()) @db.Uuid
   amount          Decimal  @db.Decimal(19, 4)

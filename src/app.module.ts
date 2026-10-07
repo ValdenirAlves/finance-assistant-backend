@@ -6,9 +6,11 @@ import { CategoriesModule } from './categories/categories.module.js';
 import { BudgetsModule } from './budgets/budgets.module.js';
 import { AnalyticsModule } from './analytics/analytics.module.js';
 import { PrismaModule } from './prisma/prisma.module.js';
+import { AiModule } from './ai/ai.module.js';
 
 @Module({
   imports: [
+    AiModule,
     PrismaModule,
     ExpensesModule,
     CategoriesModule,
