@@ -11,6 +11,7 @@ import type { Expense } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { CreateExpenseDto } from './dto/create-expense.dto.js';
 import { FilterExpensesDto } from './dto/filter-expenses.dto.js';
+import { parseDateRange } from '../common/date-range.js';
 
 @Injectable()
 export class ExpensesService {
@@ -58,20 +59,10 @@ export class ExpensesService {
         errors.flatMap((error) => Object.values(error.constraints ?? {})),
       );
     }
-    const from = filters.from ? new Date(filters.from) : undefined;
-    const to = filters.to ? new Date(filters.to) : undefined;
-    if (
-      (from && Number.isNaN(from.getTime())) ||
-      (to && Number.isNaN(to.getTime()))
-    ) {
-      throw new BadRequestException('from and to must be valid dates');
-    }
-    if (to && /^\d{4}-\d{2}-\d{2}$/.test(filters.to!)) {
-      to.setUTCHours(23, 59, 59, 999);
-    }
-    if (from && to && from > to) {
-      throw new BadRequestException('from must not be after to');
-    }
+    const { from, to } = parseDateRange(
+      filters.from ?? undefined,
+      filters.to ?? undefined,
+    );
     const where: Prisma.ExpenseWhereInput = {};
     if (filters.currency) where.currency = filters.currency;
     if (filters.merchant !== undefined && filters.merchant !== null) {
