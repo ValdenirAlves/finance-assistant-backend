@@ -10,6 +10,7 @@ import { Prisma } from '../generated/prisma/client.js';
 import type { Expense } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { CreateExpenseDto } from './dto/create-expense.dto.js';
+import { FilterExpensesDto } from './dto/filter-expenses.dto.js';
 
 @Injectable()
 export class ExpensesService {
@@ -46,8 +47,46 @@ export class ExpensesService {
     return this.serialize(expense);
   }
 
-  async findAll() {
+  async findAll(input: FilterExpensesDto = {}) {
+    const filters = plainToInstance(FilterExpensesDto, input);
+    const errors = validateSync(filters, {
+      whitelist: true,
+      forbidNonWhitelisted: true,
+    });
+    if (errors.length) {
+      throw new BadRequestException(
+        errors.flatMap((error) => Object.values(error.constraints ?? {})),
+      );
+    }
+    const from = filters.from ? new Date(filters.from) : undefined;
+    const to = filters.to ? new Date(filters.to) : undefined;
+    if (
+      (from && Number.isNaN(from.getTime())) ||
+      (to && Number.isNaN(to.getTime()))
+    ) {
+      throw new BadRequestException('from and to must be valid dates');
+    }
+    if (to && /^\d{4}-\d{2}-\d{2}$/.test(filters.to!)) {
+      to.setUTCHours(23, 59, 59, 999);
+    }
+    if (from && to && from > to) {
+      throw new BadRequestException('from must not be after to');
+    }
+    const where: Prisma.ExpenseWhereInput = {};
+    if (filters.currency) where.currency = filters.currency;
+    if (filters.merchant !== undefined && filters.merchant !== null) {
+      // Escape PostgreSQL LIKE wildcards so the search treats input as literal text.
+      const contains = filters.merchant.replace(/[\\%_]/g, '\\$&');
+      where.merchant = { contains, mode: 'insensitive' };
+    }
+    if (from || to) {
+      where.transactionDate = {
+        ...(from ? { gte: from } : {}),
+        ...(to ? { lte: to } : {}),
+      };
+    }
     const expenses = await this.prisma.expense.findMany({
+      ...(Object.keys(where).length ? { where } : {}),
       orderBy: { transactionDate: 'desc' },
     });
     return expenses.map((expense) => this.serialize(expense));

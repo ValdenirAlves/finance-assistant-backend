@@ -127,6 +127,91 @@ describe('ExpensesService', () => {
     });
   });
 
+  describe('filtering', () => {
+    beforeEach(() => prisma.expense.findMany.mockResolvedValue([record]));
+
+    it.each([
+      [{ currency: Currency.EUR }, { currency: Currency.EUR }],
+      [{ currency: Currency.BRL }, { currency: Currency.BRL }],
+      [
+        { merchant: 'Tesco' },
+        { merchant: { contains: 'Tesco', mode: 'insensitive' } },
+      ],
+      [
+        { merchant: '50%_off' },
+        { merchant: { contains: '50\\%\\_off', mode: 'insensitive' } },
+      ],
+      [
+        { from: '2026-10-01', to: '2026-10-31' },
+        {
+          transactionDate: {
+            gte: new Date('2026-10-01T00:00:00Z'),
+            lte: new Date('2026-10-31T23:59:59.999Z'),
+          },
+        },
+      ],
+      [
+        { from: '2026-10-01' },
+        { transactionDate: { gte: new Date('2026-10-01T00:00:00Z') } },
+      ],
+      [
+        { to: '2026-10-31' },
+        { transactionDate: { lte: new Date('2026-10-31T23:59:59.999Z') } },
+      ],
+      [
+        { from: '2026-10-01T12:00:00Z', to: '2026-10-01T12:00:00Z' },
+        {
+          transactionDate: {
+            gte: new Date('2026-10-01T12:00:00Z'),
+            lte: new Date('2026-10-01T12:00:00Z'),
+          },
+        },
+      ],
+      [
+        {
+          currency: Currency.EUR,
+          merchant: 'Tesco',
+          from: '2026-10-01',
+          to: '2026-10-31',
+        },
+        {
+          currency: Currency.EUR,
+          merchant: { contains: 'Tesco', mode: 'insensitive' },
+          transactionDate: {
+            gte: new Date('2026-10-01T00:00:00Z'),
+            lte: new Date('2026-10-31T23:59:59.999Z'),
+          },
+        },
+      ],
+    ])(
+      'applies filters %j while preserving amounts',
+      async (filters, where) => {
+        expect(await service.findAll(filters)).toEqual([
+          { ...record, amount: '12.5000' },
+        ]);
+        expect(prisma.expense.findMany).toHaveBeenCalledWith({
+          where,
+          orderBy: { transactionDate: 'desc' },
+        });
+      },
+    );
+
+    it.each([
+      { currency: 'USD' as Currency },
+      { from: 'invalid' },
+      { to: 'invalid' },
+      { from: '2026-02-30' },
+      { to: '2026-02-30' },
+      { from: '2026-11-01', to: '2026-10-31' },
+      { from: '2026-10-01T12:00:01Z', to: '2026-10-01T12:00:00Z' },
+    ])('rejects invalid filters %j before persistence', async (filters) => {
+      await expect(service.findAll(filters)).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+      expect(prisma.expense.findMany).not.toHaveBeenCalled();
+    });
+  });
+
   it('findById returns an expense', async () => {
     prisma.expense.findUnique.mockResolvedValue(record);
     expect(await service.findById(record.id)).toEqual({

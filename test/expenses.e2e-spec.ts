@@ -104,6 +104,65 @@ describe('Expenses endpoints (e2e, mocked persistence)', () => {
     });
   });
 
+  it.each([
+    ['currency=EUR', { currency: Currency.EUR }],
+    [
+      'merchant=Tesco',
+      { merchant: { contains: 'Tesco', mode: 'insensitive' } },
+    ],
+    [
+      'from=2026-10-01&to=2026-10-31',
+      {
+        transactionDate: {
+          gte: new Date('2026-10-01T00:00:00Z'),
+          lte: new Date('2026-10-31T23:59:59.999Z'),
+        },
+      },
+    ],
+    [
+      'currency=EUR&merchant=Tesco&from=2026-10-01&to=2026-10-31',
+      {
+        currency: Currency.EUR,
+        merchant: { contains: 'Tesco', mode: 'insensitive' },
+        transactionDate: {
+          gte: new Date('2026-10-01T00:00:00Z'),
+          lte: new Date('2026-10-31T23:59:59.999Z'),
+        },
+      },
+    ],
+  ])(
+    'GET /expenses?%s passes combined filters to persistence',
+    async (query, where) => {
+      const response = await request(app.getHttpServer())
+        .get(`/expenses?${query}`)
+        .expect(200);
+      expect(response.body[0]).toMatchObject({
+        id,
+        amount: '12.5000',
+        currency: 'EUR',
+      });
+      expect(expense.findMany).toHaveBeenCalledWith({
+        where,
+        orderBy: { transactionDate: 'desc' },
+      });
+    },
+  );
+
+  it.each([
+    'currency=USD',
+    'from=invalid',
+    'to=invalid',
+    'from=2026-02-30',
+    'to=2026-02-30',
+    'from=2026-11-01&to=2026-10-31',
+    'currency=EUR&currency=BRL',
+    'merchant=Tesco&merchant=Lidl',
+    'unknown=value',
+  ])('GET /expenses?%s returns 400 before persistence', async (query) => {
+    await request(app.getHttpServer()).get(`/expenses?${query}`).expect(400);
+    expect(expense.findMany).not.toHaveBeenCalled();
+  });
+
   it('GET /expenses returns an empty array when no expenses exist', async () => {
     expense.findMany.mockResolvedValue([]);
     await request(app.getHttpServer()).get('/expenses').expect(200).expect([]);

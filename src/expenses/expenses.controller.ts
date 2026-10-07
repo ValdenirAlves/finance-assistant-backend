@@ -6,9 +6,11 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
+  Query,
   ValidationPipe,
 } from '@nestjs/common';
 import { CreateExpenseDto } from './dto/create-expense.dto.js';
+import { FilterExpensesDto } from './dto/filter-expenses.dto.js';
 import { ExpensesService } from './expenses.service.js';
 
 @Controller('expenses')
@@ -33,8 +35,18 @@ export class ExpensesController {
   }
 
   @Get()
-  findAll() {
-    return this.expenses.findAll();
+  findAll(
+    @Query(
+      new ValidationPipe({
+        expectedType: FilterExpensesDto,
+        transform: true,
+        whitelist: true,
+        forbidNonWhitelisted: true,
+      }),
+    )
+    filters: FilterExpensesDto,
+  ) {
+    return this.expenses.findAll(filters);
   }
 
   @Get(':id')
