@@ -18,7 +18,7 @@ model Expense {
   id              String   @id @default(uuid()) @db.Uuid
   amount          Decimal  @db.Decimal(19, 4)
   currency        Currency
-  description     String
+  description     String?
   merchant        String?
   transactionDate DateTime @db.Timestamptz(3)
   createdAt       DateTime @default(now()) @db.Timestamptz(3)
