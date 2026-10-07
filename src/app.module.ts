@@ -5,9 +5,16 @@ import { ExpensesModule } from './expenses/expenses.module.js';
 import { CategoriesModule } from './categories/categories.module.js';
 import { BudgetsModule } from './budgets/budgets.module.js';
 import { AnalyticsModule } from './analytics/analytics.module.js';
+import { PrismaModule } from './prisma/prisma.module.js';
 
 @Module({
-  imports: [ExpensesModule, CategoriesModule, BudgetsModule, AnalyticsModule],
+  imports: [
+    PrismaModule,
+    ExpensesModule,
+    CategoriesModule,
+    BudgetsModule,
+    AnalyticsModule,
+  ],
   controllers: [AppController],
   providers: [AppService],
 })
