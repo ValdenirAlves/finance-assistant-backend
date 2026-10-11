@@ -7,6 +7,7 @@ import { AnalyticsService } from '../src/analytics/analytics.service.js';
 import { ExpensesService } from '../src/expenses/expenses.service.js';
 import { ConversationService } from '../src/conversations/conversation.service.js';
 import { NotFoundException } from '@nestjs/common';
+import { PendingExpenseService } from '../src/pending-expenses/pending-expense.service.js';
 
 const { create } = vi.hoisted(() => ({ create: vi.fn() }));
 vi.mock('openai', () => ({
@@ -68,6 +69,8 @@ describe('POST /ai/chat (mocked SDK)', () => {
       .useValue({ findAll })
       .overrideProvider(ConversationService)
       .useValue(conversations)
+      .overrideProvider(PendingExpenseService)
+      .useValue({ get: vi.fn().mockResolvedValue(null) })
       .compile();
     app = module.createNestApplication();
     await app.init();

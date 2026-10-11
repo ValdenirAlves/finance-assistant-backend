@@ -19,11 +19,36 @@ enum ConversationRole {
   ASSISTANT
 }
 
+enum PendingExpenseStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+}
+
+model PendingExpense {
+  id                    String               @id @default(uuid()) @db.Uuid
+  conversationId        String               @unique @db.Uuid
+  amount                Decimal              @db.Decimal(19, 4)
+  currency              Currency
+  description           String?
+  merchant              String?
+  transactionDate       DateTime             @db.Timestamptz(3)
+  status                PendingExpenseStatus @default(PENDING)
+  revision              Int                  @default(1)
+  confirmationRequested Boolean              @default(false)
+  expenseId             String?              @unique @db.Uuid
+  createdAt             DateTime             @default(now()) @db.Timestamptz(3)
+  updatedAt             DateTime             @updatedAt @db.Timestamptz(3)
+  conversation          Conversation         @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  expense               Expense?             @relation(fields: [expenseId], references: [id])
+}
+
 model Conversation {
-  id        String                @id @default(uuid()) @db.Uuid
-  createdAt DateTime              @default(now()) @db.Timestamptz(3)
-  updatedAt DateTime              @updatedAt @db.Timestamptz(3)
-  messages  ConversationMessage[]
+  id             String                @id @default(uuid()) @db.Uuid
+  createdAt      DateTime              @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime              @updatedAt @db.Timestamptz(3)
+  messages       ConversationMessage[]
+  pendingExpense PendingExpense?
 }
 
 model ConversationMessage {
@@ -38,12 +63,13 @@ model ConversationMessage {
 }
 
 model Expense {
-  id              String   @id @default(uuid()) @db.Uuid
-  amount          Decimal  @db.Decimal(19, 4)
+  pendingExpense  PendingExpense?
+  id              String          @id @default(uuid()) @db.Uuid
+  amount          Decimal         @db.Decimal(19, 4)
   currency        Currency
   description     String?
   merchant        String?
-  transactionDate DateTime @db.Timestamptz(3)
-  createdAt       DateTime @default(now()) @db.Timestamptz(3)
-  updatedAt       DateTime @updatedAt @db.Timestamptz(3)
+  transactionDate DateTime        @db.Timestamptz(3)
+  createdAt       DateTime        @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime        @updatedAt @db.Timestamptz(3)
 }

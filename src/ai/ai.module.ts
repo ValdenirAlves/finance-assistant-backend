@@ -4,9 +4,15 @@ import { ExpensesModule } from '../expenses/expenses.module.js';
 import { AiController } from './ai.controller.js';
 import { AiService } from './ai.service.js';
 import { ConversationsModule } from '../conversations/conversations.module.js';
+import { PendingExpensesModule } from '../pending-expenses/pending-expenses.module.js';
 
 @Module({
-  imports: [AnalyticsModule, ExpensesModule, ConversationsModule],
+  imports: [
+    AnalyticsModule,
+    ExpensesModule,
+    ConversationsModule,
+    PendingExpensesModule,
+  ],
   controllers: [AiController],
   providers: [AiService],
 })

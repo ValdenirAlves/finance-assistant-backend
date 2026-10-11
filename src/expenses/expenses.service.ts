@@ -17,7 +17,7 @@ import { parseDateRange } from '../common/date-range.js';
 export class ExpensesService {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
-  async create(input: CreateExpenseDto) {
+  validateCreate(input: CreateExpenseDto) {
     const dto = plainToInstance(CreateExpenseDto, input);
     const errors = validateSync(dto, {
       whitelist: true,
@@ -36,15 +36,21 @@ export class ExpensesService {
     if (Number.isNaN(transactionDate.getTime())) {
       throw new BadRequestException('transactionDate must be a valid date');
     }
-    const expense = await this.prisma.expense.create({
-      data: {
-        amount,
-        currency: dto.currency,
-        transactionDate,
-        description: dto.description ?? null,
-        merchant: dto.merchant ?? null,
-      },
-    });
+    return {
+      amount,
+      currency: dto.currency,
+      transactionDate,
+      description: dto.description ?? null,
+      merchant: dto.merchant ?? null,
+    };
+  }
+
+  async create(
+    input: CreateExpenseDto,
+    transaction?: Prisma.TransactionClient,
+  ) {
+    const data = this.validateCreate(input);
+    const expense = await (transaction ?? this.prisma).expense.create({ data });
     return this.serialize(expense);
   }
 

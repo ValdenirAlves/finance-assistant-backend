@@ -7,6 +7,7 @@ import { AiService } from './ai.service.js';
 import { AnalyticsService } from '../analytics/analytics.service.js';
 import { ExpensesService } from '../expenses/expenses.service.js';
 import { ConversationService } from '../conversations/conversation.service.js';
+import { PendingExpenseService } from '../pending-expenses/pending-expense.service.js';
 
 const { create } = vi.hoisted(() => ({ create: vi.fn() }));
 vi.mock('openai', () => ({
@@ -20,6 +21,7 @@ describe('AiService', () => {
   const monthlySummary = vi.fn();
   const byMerchant = vi.fn();
   const findAll = vi.fn();
+  const pendingExpenses = { get: vi.fn() };
   const conversationId = '11111111-1111-4111-8111-111111111111';
   const conversations = {
     create: vi.fn(),
@@ -52,6 +54,7 @@ describe('AiService', () => {
   beforeEach(() => {
     vi.resetAllMocks();
     vi.stubEnv('OPENAI_API_KEY', 'test-key');
+    pendingExpenses.get.mockResolvedValue(null);
     conversations.create.mockResolvedValue({ id: conversationId });
     conversations.recentMessages.mockResolvedValue([]);
     conversations.saveTurn.mockResolvedValue(undefined);
@@ -66,6 +69,7 @@ describe('AiService', () => {
       { monthlySummary, byMerchant } as unknown as AnalyticsService,
       { findAll } as unknown as ExpensesService,
       conversations as unknown as ConversationService,
+      pendingExpenses as unknown as PendingExpenseService,
     );
   });
   afterEach(() => vi.unstubAllEnvs());
