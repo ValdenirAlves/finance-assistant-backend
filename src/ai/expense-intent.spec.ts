@@ -6,6 +6,8 @@ describe('explicit expense preparation routing', () => {
     'Add 32 EUR for lunch.',
     'Registra 85 reais no Carrefour.',
     'Yesterday I paid 119.90 BRL for Claro.',
+    'Gastei 42 euros no Tesco no meu cartão.',
+    'Gastei 70 euros no Lidl no cartão da minha esposa.',
   ])('routes %s to preparation without authorizing confirmation', (message) => {
     expect(isExplicitExpensePreparation(message)).toBe(true);
   });

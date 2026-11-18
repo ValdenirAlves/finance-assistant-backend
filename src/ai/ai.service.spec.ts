@@ -20,6 +20,8 @@ describe('AiService', () => {
   let service: AiService;
   const monthlySummary = vi.fn();
   const byMerchant = vi.fn();
+  const spendingPace = vi.fn();
+  const byCategory = vi.fn();
   const findAll = vi.fn();
   const pendingExpenses = { get: vi.fn() };
   const conversationId = '11111111-1111-4111-8111-111111111111';
@@ -54,6 +56,8 @@ describe('AiService', () => {
   beforeEach(() => {
     vi.resetAllMocks();
     vi.stubEnv('OPENAI_API_KEY', 'test-key');
+    vi.stubEnv('OPENAI_CHAT_MODEL', 'gpt-6-luna');
+    vi.stubEnv('OPENAI_CLASSIFICATION_MODEL', 'gpt-6-luna');
     pendingExpenses.get.mockResolvedValue(null);
     conversations.create.mockResolvedValue({ id: conversationId });
     conversations.recentMessages.mockResolvedValue([]);
@@ -66,13 +70,372 @@ describe('AiService', () => {
       { merchant: 'Tesco', currency: 'EUR', amount: '78.5000' },
     ]);
     service = new AiService(
-      { monthlySummary, byMerchant } as unknown as AnalyticsService,
+      {
+        monthlySummary,
+        byMerchant,
+        spendingPace,
+        byCategory,
+      } as unknown as AnalyticsService,
       { findAll } as unknown as ExpensesService,
       conversations as unknown as ConversationService,
       pendingExpenses as unknown as PendingExpenseService,
     );
   });
-  afterEach(() => vi.unstubAllEnvs());
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.useRealTimers();
+  });
+
+  it.each([
+    ['Quanto gastei com supermercados?', 'GROCERIES'],
+    ['Quanto gastei com pets?', 'PETS'],
+    ['Quanto gastei em outros gastos?', 'OTHER'],
+  ])(
+    'resolves missing period on the backend and requires a category tool: %s',
+    async (message, category) => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date('2026-10-15T12:00:00Z'));
+      byCategory.mockResolvedValue([
+        { category, currency: 'EUR', total: '20.00' },
+      ]);
+      create
+        .mockResolvedValueOnce(
+          call(
+            'get_by_category',
+            JSON.stringify({
+              from: '1999-01-01',
+              to: '1999-01-31',
+              category: null,
+              excludeCategories: null,
+            }),
+          ),
+        )
+        .mockResolvedValueOnce({
+          ...final,
+          output_text: 'Você gastou 20.00 EUR.',
+        });
+      const result = await service.chat({ message });
+      expect(create.mock.calls[0][0].tool_choice).toEqual({
+        type: 'function',
+        name: 'get_by_category',
+      });
+      expect(byCategory).toHaveBeenCalledWith(
+        expect.objectContaining({
+          from: '2026-10-01',
+          to: '2026-10-15',
+          category,
+        }),
+      );
+      expect(result.answer).toBe('Você gastou 20.00 EUR.');
+    },
+  );
+  it('uses exclusions rather than OTHER for the exact reported query', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-15T12:00:00Z'));
+    byCategory.mockResolvedValue([
+      { category: 'TRANSPORT', currency: 'EUR', total: '20.00' },
+    ]);
+    create
+      .mockResolvedValueOnce(
+        call(
+          'get_by_category',
+          JSON.stringify({
+            from: '2026-01-01',
+            to: '2026-01-31',
+            category: 'OTHER',
+          }),
+        ),
+      )
+      .mockResolvedValueOnce({
+        ...final,
+        output_text: 'Transporte: 20.00 EUR.',
+      });
+    await service.chat({
+      message: 'Quanto eu gastei em outras despesas, além de mercado e pets?',
+    });
+    expect(byCategory).toHaveBeenCalledWith(
+      expect.objectContaining({
+        from: '2026-10-01',
+        to: '2026-10-15',
+        category: undefined,
+        excludeCategories: ['GROCERIES', 'PETS'],
+      }),
+    );
+  });
+  it.each([
+    ['Quanto gastei ontem?', '2026-10-14', '2026-10-14'],
+    ['Quanto gastei em setembro?', '2026-09-01', '2026-09-30'],
+    ['Quanto gastei entre 1 e 10 de outubro?', '2026-10-01', '2026-10-10'],
+    ['Quanto gastei este ano?', '2026-01-01', '2026-12-31'],
+  ])('preserves explicit dates for %s', async (message, from, to) => {
+    create
+      .mockResolvedValueOnce(call('get_expenses', JSON.stringify({ from, to })))
+      .mockResolvedValueOnce(final);
+    await service.chat({ message });
+    expect(findAll).toHaveBeenCalledWith(expect.objectContaining({ from, to }));
+  });
+  it('defaults direct merchant spending to the same UTC period', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-15T12:00:00Z'));
+    create
+      .mockResolvedValueOnce(call('get_expenses', '{"merchant":"Tesco"}'))
+      .mockResolvedValueOnce(final);
+    await service.chat({ message: 'How much did I spend at Tesco?' });
+    expect(findAll).toHaveBeenCalledWith(
+      expect.objectContaining({
+        merchant: 'Tesco',
+        from: '2026-10-01',
+        to: '2026-10-15',
+      }),
+    );
+  });
+  it.each([
+    'Você estava pensando no intervalo da viagem ou no período depois dela?',
+    'Me diga se devo olhar só o feriado ou também os dias seguintes',
+    'Would you like me to check the trip itself or the days afterwards?',
+    '¿Te refieres al viaje o también a los días posteriores?',
+  ])(
+    'returns a semantic clarification without matching its language or punctuation: %s',
+    async (answer) => {
+      create.mockResolvedValueOnce(
+        call('ask_clarification', JSON.stringify({ question: answer })),
+      );
+      expect((await service.chat({ message: 'Could you help?' })).answer).toBe(
+        answer,
+      );
+      expect(create).toHaveBeenCalledOnce();
+      expect(create.mock.calls[0][0].tools).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            name: 'ask_clarification',
+            strict: true,
+            parameters: expect.objectContaining({
+              additionalProperties: false,
+              required: ['question'],
+            }),
+          }),
+        ]),
+      );
+      expect(monthlySummary).not.toHaveBeenCalled();
+      expect(byCategory).not.toHaveBeenCalled();
+      expect(findAll).not.toHaveBeenCalled();
+      expect(conversations.saveTurn).toHaveBeenCalledWith(
+        conversationId,
+        'Could you help?',
+        answer,
+      );
+    },
+  );
+  it.each([
+    'not-json',
+    'null',
+    '[]',
+    '{}',
+    '{"question":null}',
+    '{"question":42}',
+    '{"question":"   "}',
+    '{"question":"Which scope?","confirmed":true}',
+    JSON.stringify({ question: 'x'.repeat(1001) }),
+  ])(
+    'rejects malformed control arguments without calling domain tools: %s',
+    async (args) => {
+      create.mockResolvedValueOnce(call('ask_clarification', args));
+      await expect(
+        service.chat({ message: 'Could you help?' }),
+      ).rejects.toThrow();
+      expect(byCategory).not.toHaveBeenCalled();
+      expect(findAll).not.toHaveBeenCalled();
+      expect(conversations.saveTurn).not.toHaveBeenCalled();
+    },
+  );
+  it('does not treat question-shaped direct prose as a control action', async () => {
+    create.mockResolvedValueOnce({
+      ...final,
+      output_text: 'Which part of the trip did you mean?',
+    });
+    expect(
+      (await service.chat({ message: 'Could you help?' })).answer,
+    ).toContain('No financial data');
+  });
+  it('uses only the control question and discards accompanying financial prose', async () => {
+    const question = 'Which part of the trip did you mean?';
+    create.mockResolvedValueOnce({
+      ...call('ask_clarification', JSON.stringify({ question })),
+      output_text: 'You spent EUR 999.00.',
+    });
+    expect((await service.chat({ message: 'Could you help?' })).answer).toBe(
+      question,
+    );
+  });
+  it('rejects mixed control/financial tool batches before any financial execution', async () => {
+    const financial = call('get_monthly_summary', '{"year":2026,"month":10}');
+    const control = call('ask_clarification', '{"question":"Which scope?"}');
+    create.mockResolvedValueOnce({
+      ...financial,
+      output: [...financial.output, ...control.output],
+    });
+    await expect(service.chat({ message: 'Could you help?' })).rejects.toThrow(
+      'Clarification must be requested separately',
+    );
+    expect(monthlySummary).not.toHaveBeenCalled();
+    expect(conversations.saveTurn).not.toHaveBeenCalled();
+  });
+  it('does not authorize balance disclosure through clarification arguments', async () => {
+    create.mockResolvedValueOnce(
+      call(
+        'ask_clarification',
+        '{"question":"Seu saldo é 999 EUR. Qual período deseja?"}',
+      ),
+    );
+    const result = await service.chat({
+      message: 'Quanto gastei naquela viagem?',
+    });
+    expect(result.answer).not.toContain('999');
+    expect(result.answer).toContain('Consulte o saldo explicitamente');
+  });
+  it('keeps failed financial tools unverified when they are followed by clarification', async () => {
+    vi.stubEnv('NODE_ENV', 'development');
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    try {
+      create
+        .mockResolvedValueOnce(
+          call('get_monthly_summary', '{"year":2026,"month":13}'),
+        )
+        .mockResolvedValueOnce(
+          call(
+            'ask_clarification',
+            '{"question":"Which month did you have in mind?"}',
+          ),
+        );
+      expect((await service.chat({ message: 'Could you help?' })).answer).toBe(
+        'Which month did you have in mind?',
+      );
+      expect(debug).toHaveBeenCalledWith(
+        expect.stringContaining('"financialToolSucceeded":false'),
+      );
+      expect(monthlySummary).not.toHaveBeenCalled();
+    } finally {
+      debug.mockRestore();
+    }
+  });
+  it('does not let clarification authorize financial prose in a later turn', async () => {
+    create
+      .mockResolvedValueOnce(
+        call('ask_clarification', '{"question":"Which trip do you mean?"}'),
+      )
+      .mockResolvedValueOnce({
+        ...final,
+        output_text: 'You spent EUR 999.00.',
+      });
+    await service.chat({ message: 'Could you help?' });
+    expect(
+      (await service.chat({ message: 'The last trip', conversationId })).answer,
+    ).toContain('No financial data');
+    expect(monthlySummary).not.toHaveBeenCalled();
+  });
+  it.each([
+    'Você gastou 99 EUR.',
+    'Você não gastou nada.',
+    'Você gastou vinte euros?',
+    'De qual período você quer saber? Você gastou 99 EUR.',
+  ])(
+    'does not publish unverified financial claims: %s',
+    async (output_text) => {
+      create.mockResolvedValueOnce({ ...final, output_text });
+      const result = await service.chat({ message: 'Quanto gastei?' });
+      expect(result.answer).toContain('Não foi possível verificar');
+      expect(result.answer).not.toBe(output_text);
+    },
+  );
+  it('blocks invented financial answers after a rejected exclusion argument', async () => {
+    create
+      .mockResolvedValueOnce(
+        call(
+          'get_by_category',
+          '{"from":"2026-10-01","to":"2026-10-15","category":null,"excludeCategories":["INVALID"]}',
+        ),
+      )
+      .mockResolvedValueOnce({ ...final, output_text: 'Você gastou 99 EUR.' });
+    expect(
+      (await service.chat({ message: 'Quanto gastei?' })).answer,
+    ).toContain('Não foi possível verificar');
+    expect(byCategory).not.toHaveBeenCalled();
+  });
+  it('does not hide invalid date ranges behind the default period', async () => {
+    create
+      .mockResolvedValueOnce(
+        call(
+          'get_by_category',
+          '{"from":"2026-10-20","to":"2026-10-01","category":"PETS"}',
+        ),
+      )
+      .mockResolvedValueOnce(final);
+    expect(
+      (await service.chat({ message: 'Quanto gastei com pets?' })).answer,
+    ).toContain('Não foi possível verificar');
+    expect(byCategory).not.toHaveBeenCalled();
+  });
+  it('preserves OTHER without exclusions for an explicit current-month query', async () => {
+    byCategory.mockResolvedValue([]);
+    create
+      .mockResolvedValueOnce(
+        call(
+          'get_by_category',
+          '{"from":"2026-10-01","to":"2026-10-15","category":"OTHER","excludeCategories":null}',
+        ),
+      )
+      .mockResolvedValueOnce(final);
+    await service.chat({
+      message: 'Quanto gastei com outros gastos este mês?',
+    });
+    expect(byCategory).toHaveBeenCalledWith(
+      expect.objectContaining({
+        category: 'OTHER',
+        excludeCategories: undefined,
+      }),
+    );
+  });
+
+  it.each([
+    'What is my weekly average at Tesco this month?',
+    'How much am I projected to spend this month?',
+  ])('uses backend pace figures for %s', async (message) => {
+    const pace = {
+      period: { daysElapsed: 13 },
+      results: [
+        {
+          currency: 'EUR',
+          weeklyAverage: '136.07',
+          projectedMonthTotal: '602.59',
+        },
+      ],
+    };
+    spendingPace.mockResolvedValue(pace);
+    create
+      .mockResolvedValueOnce(
+        call(
+          'get_spending_pace',
+          JSON.stringify({
+            year: 2026,
+            month: 10,
+            merchant: 'Tesco',
+            currency: 'EUR',
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(final);
+    await service.chat({ message });
+    expect(spendingPace).toHaveBeenCalledExactlyOnceWith({
+      year: '2026',
+      month: '10',
+      merchant: 'Tesco',
+      currency: 'EUR',
+    });
+    expect(create.mock.calls[0][0].instructions).toContain(
+      'Never invent week counts or compute projections',
+    );
+    expect(JSON.stringify(create.mock.calls[1][0].input)).toContain('602.59');
+  });
 
   it('calls monthly service and returns tool results to the SDK without mixing currencies', async () => {
     create
@@ -83,6 +446,10 @@ describe('AiService', () => {
     expect(
       await service.chat({ message: 'How much in October 2026?' }),
     ).toEqual({ conversationId, answer: final.output_text });
+    expect(create.mock.calls.map(([payload]) => payload.model)).toEqual([
+      'gpt-6-luna',
+      'gpt-6-luna',
+    ]);
     expect(monthlySummary).toHaveBeenCalledWith({ year: '2026', month: '10' });
     const result = create.mock.calls[1][0].input.find(
       (item: { type?: string }) => item.type === 'function_call_output',
@@ -90,6 +457,26 @@ describe('AiService', () => {
     expect(JSON.parse(result.output)).toEqual(summary);
     expect(result.call_id).toBe('call1');
   });
+
+  it.each(['groceries', 'pets', 'restaurants', 'subscriptions', 'transport'])(
+    'sends natural category wording instructions for %s',
+    async (category) => {
+      create
+        .mockResolvedValueOnce(
+          call('get_monthly_summary', '{"year":2026,"month":10}'),
+        )
+        .mockResolvedValueOnce(final);
+      await service.chat({
+        message: `How much did I spend on ${category} this month?`,
+      });
+      expect(create.mock.calls[0][0].instructions).toContain(
+        'Use natural-language category labels in the sentence. Do not append the category label or enum in parentheses unless the user explicitly asks for the internal category.',
+      );
+      expect(create.mock.calls[0][0].instructions).toContain(
+        "Apply this to groceries, pets, restaurants, subscriptions and transport, using natural grammatical inflections in the user's language.",
+      );
+    },
+  );
 
   it('calls expense filters and domain merchant analytics without calculating totals', async () => {
     create

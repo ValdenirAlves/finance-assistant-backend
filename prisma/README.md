@@ -1,5 +1,37 @@
 # PostgreSQL setup
 
+## Clear development user data
+
+Stop the backend (including active Live/Realtime sessions) and other database
+writers first. Keep Docker/PostgreSQL running. From `backend/`, with `.env`
+pointing `DATABASE_URL` at the intended development database, run:
+
+```sh
+npm run db:reset-data
+```
+
+The command builds the existing Prisma client/backend and deletes data in one
+transaction. It accepts only `NODE_ENV=development` or an unset `NODE_ENV`;
+production and other explicit environments are refused. Failures exit non-zero.
+It prints the table groups being cleared and committed deletion counts.
+
+Cleared: PendingExpense, PendingBudget, PendingBankBalance,
+ConversationMessage, Conversation, Expense, Budget, BankAccount,
+LegacyBudgetCategory (archived user budget labels), and runtime/learned
+MerchantCategoryMapping rows. Pending write/idempotency state is included.
+There are no separate persisted balance-movement, recurring-expense,
+subscription, Live-session or Realtime-session tables in the current schema.
+
+Preserved: all tables and enum definitions, schema/migration files,
+`_prisma_migrations`, and the six reference MerchantCategoryMapping rows
+inserted by migration `20261013010000_expense_categories` (Tesco, Lidl, Aldi,
+Netflix, Pet Stop and Maxi Zoo, identified by their fixed IDs). No migration
+reset, database drop or schema change is performed. Restart the backend and
+reload the UI afterwards so in-memory sessions and old conversation IDs are
+discarded. This command does not run automatically at application startup.
+
+## Setup
+
 Run commands from `backend/` using Node.js 24.21.0 and npm 11.x.
 
 1. Install dependencies with `npm install`.

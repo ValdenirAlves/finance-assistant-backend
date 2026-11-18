@@ -14,6 +14,78 @@ enum Currency {
   BRL
 }
 
+enum ExpensePayer {
+  SELF
+  SPOUSE
+}
+
+enum PaymentMethod {
+  CARD
+  BANK_ACCOUNT
+  CASH
+  OTHER
+}
+
+enum AccountOwner {
+  SELF
+}
+
+model BankAccount {
+  id String @id @default(uuid()) @db.Uuid
+  name String
+  currency Currency
+  currentBalance Decimal @db.Decimal(19, 2)
+  owner AccountOwner @default(SELF)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+  @@unique([owner, currency])
+}
+
+model PendingBankBalance {
+  id String @id @default(uuid()) @db.Uuid
+  conversationId String @unique @db.Uuid
+  name String?
+  currency Currency
+  currentBalance Decimal @db.Decimal(19, 2)
+  status PendingExpenseStatus @default(PENDING)
+  revision Int @default(1)
+  confirmationRequested Boolean @default(false)
+  accountId String? @db.Uuid
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+}
+
+enum ExpenseCategory {
+  GROCERIES
+  RESTAURANTS
+  TRANSPORT
+  FUEL
+  UTILITIES
+  RENT
+  SUBSCRIPTIONS
+  HEALTH
+  PETS
+  SHOPPING
+  ENTERTAINMENT
+  OTHER
+}
+
+model MerchantCategoryMapping {
+  id String @id @default(uuid()) @db.Uuid
+  normalizedMerchant String @unique
+  category ExpenseCategory
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+}
+
+model LegacyBudgetCategory {
+  source String
+  id String @db.Uuid
+  category String
+  @@id([source, id])
+}
+
 enum ConversationRole {
   USER
   ASSISTANT
@@ -26,16 +98,20 @@ enum PendingExpenseStatus {
 }
 
 model PendingExpense {
+  payer ExpensePayer?
+  paymentMethod PaymentMethod?
+  category ExpenseCategory @default(OTHER)
   id                    String               @id @default(uuid()) @db.Uuid
   conversationId        String               @unique @db.Uuid
-  amount                Decimal              @db.Decimal(19, 4)
-  currency              Currency
+  amount                Decimal?              @db.Decimal(19, 2)
+  currency              Currency?
   description           String?
   merchant              String?
-  transactionDate       DateTime             @db.Timestamptz(3)
+  transactionDate       DateTime?             @db.Timestamptz(3)
   status                PendingExpenseStatus @default(PENDING)
   revision              Int                  @default(1)
   confirmationRequested Boolean              @default(false)
+  duplicateReviewRequired Boolean             @default(false)
   expenseId             String?              @unique @db.Uuid
   createdAt             DateTime             @default(now()) @db.Timestamptz(3)
   updatedAt             DateTime             @updatedAt @db.Timestamptz(3)
@@ -44,6 +120,8 @@ model PendingExpense {
 }
 
 model Conversation {
+  pendingBankBalance PendingBankBalance?
+  pendingBudget PendingBudget?
   id             String                @id @default(uuid()) @db.Uuid
   createdAt      DateTime              @default(now()) @db.Timestamptz(3)
   updatedAt      DateTime              @updatedAt @db.Timestamptz(3)
@@ -63,13 +141,50 @@ model ConversationMessage {
 }
 
 model Expense {
+  payer ExpensePayer?
+  paymentMethod PaymentMethod?
+  category        ExpenseCategory @default(OTHER)
   pendingExpense  PendingExpense?
   id              String          @id @default(uuid()) @db.Uuid
-  amount          Decimal         @db.Decimal(19, 4)
+  amount          Decimal         @db.Decimal(19, 2)
   currency        Currency
   description     String?
   merchant        String?
   transactionDate DateTime        @db.Timestamptz(3)
   createdAt       DateTime        @default(now()) @db.Timestamptz(3)
   updatedAt       DateTime        @updatedAt @db.Timestamptz(3)
+}
+
+model Budget {
+  id String @id @default(uuid()) @db.Uuid
+  amount Decimal @db.Decimal(19, 2)
+  currency Currency
+  year Int
+  month Int
+  merchant String?
+  category ExpenseCategory?
+  scopeKey String
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+  pendingBudget PendingBudget?
+  @@unique([year, month, currency, scopeKey])
+}
+
+model PendingBudget {
+  id String @id @default(uuid()) @db.Uuid
+  conversationId String @unique @db.Uuid
+  amount Decimal @db.Decimal(19, 2)
+  currency Currency
+  year Int
+  month Int
+  merchant String?
+  category ExpenseCategory?
+  status PendingExpenseStatus @default(PENDING)
+  revision Int @default(1)
+  confirmationRequested Boolean @default(false)
+  budgetId String? @unique @db.Uuid
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  budget Budget? @relation(fields: [budgetId], references: [id])
 }

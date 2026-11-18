@@ -1,7 +1,7 @@
 // Match the entire message, never a substring or model-provided confidence score.
 export function pendingAction(
   message: string,
-): 'confirm' | 'cancel' | 'unclear' | null {
+): 'confirm' | 'duplicate' | 'cancel' | 'unclear' | null {
   const normalized = message
     .trim()
     .toLowerCase()
@@ -9,6 +9,16 @@ export function pendingAction(
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[.!?]+$/, '')
     .trim();
+  if (
+    [
+      'yes, save another one',
+      'yes, save it anyway',
+      'save the duplicate',
+      'sim, pode salvar outra',
+      'pode salvar mesmo assim',
+    ].includes(normalized)
+  )
+    return 'duplicate';
   if (
     [
       'yes',

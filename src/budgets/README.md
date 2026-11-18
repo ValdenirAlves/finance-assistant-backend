@@ -1,0 +1,22 @@
+# Monthly budgets
+
+POST /budgets; GET /budgets; GET /budgets/:id; GET /budgets/:id/status.
+
+Create with decimal string amount > 0 (up to 17 integer digits and 2 fractional digits), EUR/BRL, integer year 1-9999, month 1-12, and exactly one nonempty merchant/category. Amount is Decimal(19,2). Category is the controlled ExpenseCategory enum. Manual POST /expenses accepts an optional enum suggestion; persisted expenses always receive a category (OTHER when uncertain). Category budgets match the stored enum across all merchants; categories CRUD is not added.
+
+A unique database index on year/month/currency/scopeKey prevents duplicate budgets. Scope key is merchant/category plus trimmed lowercase target, so merchant case variations collide. Duplicate creation returns 409. Database checks enforce valid period, positive amount, exactly one scope and scopeKey consistency. There are no update/delete endpoints or global/recurring budgets.
+
+Status uses deterministic spending pace for the budget's period, original currency and scope. Merchant uses existing literal partial case-insensitive expense semantics; category uses its exact enum value. Current-month spending is through the full current UTC day; past months use full month; future averages/projection are unavailable. remaining = amount - spent; percentageUsed = spent / amount * 100. Decimal precision 40, monetary/percentage output two decimal strings. ON_TRACK <80%; NEAR_LIMIT >=80% and <=100%; OVER_BUDGET >100%. Remaining may be negative. projectedOverBudget compares returned projectedMonthTotal against amount and is null when projection is unavailable. Never combine currencies.
+
+AI tools: prepare_budget creates only a PendingBudget; get_budget_status retrieves fresh backend status by scope/year/month/currency. Missing budget returns unavailable, never fabricated. An unspecified period means the current UTC month, not a recurring schedule. Conversation history resolves later scope references but financial facts are freshly queried.
+
+PendingBudget is dedicated structured state, one row per conversation reused with increasing revision. A separate explicit yes/sim/pode salvar confirms. Cancellation saves nothing. Intervening reads disarm confirmation and require review again. A confirmed draft links its Budget; repeated confirmation returns that row. Writes and transitions lock the conversation and confirmation creates the Budget and marks CONFIRMED in one transaction. Failure rolls back; duplicate-budget conflicts never silently update an existing budget. Preparing an expense cancels a pending budget, and preparing a budget cancels a pending expense, so one ambiguous acknowledgement cannot save both. Corrections replace a pending draft, not a persisted budget.
+
+Voice remains transcript -> existing AiService -> deterministic speech formatting -> TTS. No budget-specific voice agent, direct database access or financial arithmetic in the model. Notifications are outside this milestone.
+
+
+Category budgets use ExpenseCategory enum values (e.g. GROCERIES), consolidate all expenses with that stored category through spending pace, and compare only the budget currency. Legacy lowercase labels are migrated to enum codes; unsupported labels become OTHER. Their original labels are retained in LegacyBudgetCategory. A collision during normalization aborts the transactional migration rather than deleting or merging budgets.
+
+Budget status additionally returns Decimal-safe overage (zero unless spent exceeds amount) and projectedOverage (null for unavailable projection). Monthly insights quote these fields directly. An internal optional effectiveDate keeps spending pace consistent with one captured UTC timestamp; it is not accepted from API clients.
+
+Budget pace guidance is included in existing status/get_budget_status for current months. daysRemaining = daysInMonth - daysElapsed (days AFTER effective UTC date). currentDailyAverage = spent/daysElapsed; allowedDailyAverageRemaining = max(remaining,0)/daysRemaining; requiredDailyReduction = max(currentDailyAverage-allowedDailyAverageRemaining,0); requiredReductionPercentage = reduction/currentDailyAverage*100, or zero if current average is zero. Unrounded Decimal precision 40; outputs two-place strings. allowedSpendingNextWeek uses min(7,daysRemaining), not rounded daily averages or an allowance beyond month-end. Past/future guidance is UNAVAILABLE; last-day daily allowance/reduction are null; exceeded budgets have zero allowance and explicit BUDGET_EXCEEDED state, not a promise to undo previous spending.

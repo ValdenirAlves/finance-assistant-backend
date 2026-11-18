@@ -21,6 +21,48 @@ describe('AnalyticsService', () => {
     } as unknown as PrismaService);
   });
 
+  it('applies category exclusions in the database before Decimal aggregation', async () => {
+    findMany.mockResolvedValue([
+      { ...row('0.10', Currency.EUR), category: 'OTHER' },
+      { ...row('0.20', Currency.EUR), category: 'OTHER' },
+      { ...row('4.56', Currency.EUR), category: 'TRANSPORT' },
+      { ...row('9.87', Currency.BRL), category: 'OTHER' },
+    ]);
+    expect(
+      await service.byCategory({
+        ...range,
+        excludeCategories: ['GROCERIES', 'PETS'],
+      }),
+    ).toEqual([
+      { category: 'OTHER', currency: 'BRL', total: '9.87' },
+      { category: 'OTHER', currency: 'EUR', total: '0.30' },
+      { category: 'TRANSPORT', currency: 'EUR', total: '4.56' },
+    ]);
+    expect(findMany.mock.calls[0][0].where.category).toEqual({
+      notIn: ['GROCERIES', 'PETS'],
+    });
+  });
+  it('applies inclusion and exclusion together without overriding either', async () => {
+    await service.byCategory({
+      ...range,
+      category: 'OTHER',
+      excludeCategories: ['OTHER'],
+    });
+    expect(findMany.mock.calls[0][0].where.category).toEqual({
+      equals: 'OTHER',
+      notIn: ['OTHER'],
+    });
+  });
+  it.each([['INVALID'], ['PETS', 'PETS'], 'PETS'])(
+    'rejects invalid excluded categories %j before querying',
+    async (excludeCategories) => {
+      await expect(
+        service.byCategory({ ...range, excludeCategories } as never),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(findMany).not.toHaveBeenCalled();
+    },
+  );
+
   it('sums EUR and BRL independently with exact Decimal addition', async () => {
     findMany.mockResolvedValue([
       row('0.10', Currency.EUR),

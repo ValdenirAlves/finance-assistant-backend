@@ -24,6 +24,7 @@ describe('ExpensesService', () => {
   };
   let service: ExpensesService;
   const input = {
+    payer: 'SPOUSE' as const,
     amount: '12.50',
     currency: Currency.EUR,
     transactionDate: '2026-10-07T12:00:00Z',
@@ -54,7 +55,7 @@ describe('ExpensesService', () => {
         merchant: null,
         transactionDate: record.transactionDate,
       });
-      expect(result).toEqual({ ...record, currency, amount: '12.5000' });
+      expect(result).toEqual({ ...record, currency, amount: '12.50' });
     },
   );
 
@@ -83,7 +84,7 @@ describe('ExpensesService', () => {
       expect(
         prisma.expense.create.mock.calls[0][0].data.amount.toString(),
       ).toBe(new Prisma.Decimal(amount).toString());
-      expect(result.amount).toBe(new Prisma.Decimal(amount).toFixed(4));
+      expect(result.amount).toBe(new Prisma.Decimal(amount).toFixed(2));
     },
   );
 
@@ -93,7 +94,7 @@ describe('ExpensesService', () => {
     '-1',
     '1.001',
     '1.0000',
-    '1.00001',
+    '1.001',
     '1000000000000000',
     'NaN',
     '1e2',
@@ -119,8 +120,8 @@ describe('ExpensesService', () => {
     };
     prisma.expense.findMany.mockResolvedValue([record, brl]);
     expect(await service.findAll()).toEqual([
-      { ...record, amount: '12.5000' },
-      { ...brl, amount: '12.5000' },
+      { ...record, amount: '12.50' },
+      { ...brl, amount: '12.50' },
     ]);
     expect(prisma.expense.findMany).toHaveBeenCalledWith({
       orderBy: { transactionDate: 'desc' },
@@ -187,7 +188,7 @@ describe('ExpensesService', () => {
       'applies filters %j while preserving amounts',
       async (filters, where) => {
         expect(await service.findAll(filters)).toEqual([
-          { ...record, amount: '12.5000' },
+          { ...record, amount: '12.50' },
         ]);
         expect(prisma.expense.findMany).toHaveBeenCalledWith({
           where,
@@ -216,7 +217,7 @@ describe('ExpensesService', () => {
     prisma.expense.findUnique.mockResolvedValue(record);
     expect(await service.findById(record.id)).toEqual({
       ...record,
-      amount: '12.5000',
+      amount: '12.50',
     });
     expect(prisma.expense.findUnique).toHaveBeenCalledWith({
       where: { id: record.id },

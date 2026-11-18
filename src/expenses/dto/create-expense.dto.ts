@@ -5,9 +5,17 @@ import {
   IsString,
   Matches,
 } from 'class-validator';
-import { Currency } from '../../generated/prisma/enums.js';
+import {
+  Currency,
+  ExpenseCategory,
+  ExpensePayer,
+  PaymentMethod,
+} from '../../generated/prisma/enums.js';
 
 export class CreateExpenseDto {
+  @IsOptional() @IsEnum(ExpensePayer) payer?: ExpensePayer | null;
+  @IsOptional() @IsEnum(PaymentMethod) paymentMethod?: PaymentMethod | null;
+  @IsOptional() @IsEnum(ExpenseCategory) category?: ExpenseCategory;
   @IsString()
   @Matches(/^(?:0|[1-9]\d{0,14})(?:\.\d{1,2})?$/, {
     message:

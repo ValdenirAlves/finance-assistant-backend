@@ -1,7 +1,8 @@
 import { IsEnum, IsISO8601, IsOptional, IsString } from 'class-validator';
-import { Currency } from '../../generated/prisma/enums.js';
+import { Currency, ExpenseCategory } from '../../generated/prisma/enums.js';
 
 export class FilterExpensesDto {
+  @IsOptional() @IsEnum(ExpenseCategory) category?: ExpenseCategory;
   @IsOptional()
   @IsEnum(Currency)
   currency?: Currency;

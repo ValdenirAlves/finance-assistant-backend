@@ -21,6 +21,7 @@ describe('Expenses endpoints (e2e, mocked persistence)', () => {
     updatedAt: date,
   };
   const input = {
+    payer: 'SPOUSE',
     amount: '12.50',
     currency: 'EUR',
     transactionDate: date.toISOString(),
@@ -60,7 +61,7 @@ describe('Expenses endpoints (e2e, mocked persistence)', () => {
       expect(response.body).toEqual({
         ...record,
         currency,
-        amount: '12.5000',
+        amount: '12.50',
         transactionDate: date.toISOString(),
         createdAt: date.toISOString(),
         updatedAt: date.toISOString(),
@@ -80,7 +81,7 @@ describe('Expenses endpoints (e2e, mocked persistence)', () => {
         .post('/expenses')
         .send({ ...input, amount })
         .expect(201);
-      expect(response.body.amount).toBe(new Prisma.Decimal(amount).toFixed(4));
+      expect(response.body.amount).toBe(new Prisma.Decimal(amount).toFixed(2));
       expect(expense.create.mock.calls[0][0].data.amount.toString()).toBe(
         new Prisma.Decimal(amount).toString(),
       );
@@ -98,7 +99,7 @@ describe('Expenses endpoints (e2e, mocked persistence)', () => {
     expect(
       response.body.map((item: { currency: string }) => item.currency),
     ).toEqual(['EUR', 'BRL']);
-    expect(response.body[0].amount).toBe('12.5000');
+    expect(response.body[0].amount).toBe('12.50');
     expect(expense.findMany).toHaveBeenCalledWith({
       orderBy: { transactionDate: 'desc' },
     });
@@ -138,7 +139,7 @@ describe('Expenses endpoints (e2e, mocked persistence)', () => {
         .expect(200);
       expect(response.body[0]).toMatchObject({
         id,
-        amount: '12.5000',
+        amount: '12.50',
         currency: 'EUR',
       });
       expect(expense.findMany).toHaveBeenCalledWith({
@@ -173,7 +174,7 @@ describe('Expenses endpoints (e2e, mocked persistence)', () => {
       .get(`/expenses/${id}`)
       .expect(200);
     expect(response.body.id).toBe(id);
-    expect(response.body.amount).toBe('12.5000');
+    expect(response.body.amount).toBe('12.50');
   });
 
   it('unknown expense UUID returns 404', async () => {
@@ -194,7 +195,7 @@ describe('Expenses endpoints (e2e, mocked persistence)', () => {
     { ...input, amount: '-2' },
     { ...input, amount: '1.001' },
     { ...input, amount: '1.0000' },
-    { ...input, amount: '1.00001' },
+    { ...input, amount: '1.001' },
     { ...input, amount: '1000000000000000' },
     { ...input, currency: 'USD' },
     { ...input, transactionDate: 'invalid' },

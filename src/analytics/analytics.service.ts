@@ -7,6 +7,9 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import { parseDateRange } from '../common/date-range.js';
 import { MonthlySummaryDto } from './dto/monthly-summary.dto.js';
 import { ByMerchantDto } from './dto/by-merchant.dto.js';
+import { SpendingPaceDto } from './dto/spending-pace.dto.js';
+import { merchantFilter } from '../common/merchant-filter.js';
+import { ByCategoryDto } from './dto/by-category.dto.js';
 
 // Higher precision prevents the default Decimal precision from rounding large sums.
 const Decimal = Prisma.Decimal.clone({ precision: 40 });
@@ -14,6 +17,130 @@ const Decimal = Prisma.Decimal.clone({ precision: 40 });
 @Injectable()
 export class AnalyticsService {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
+
+  currentDate() {
+    return new Date();
+  }
+
+  async byCategory(input: ByCategoryDto) {
+    const dto = plainToInstance(ByCategoryDto, input);
+    this.validate(dto);
+    const { from, to } = parseDateRange(dto.from, dto.to);
+    const expenses = await this.prisma.expense.findMany({
+      where: {
+        transactionDate: { gte: from, lte: to },
+        ...(dto.category ? { category: dto.category } : {}),
+        ...(dto.excludeCategories?.length
+          ? {
+              category: {
+                ...(dto.category ? { equals: dto.category } : {}),
+                notIn: dto.excludeCategories,
+              },
+            }
+          : {}),
+      },
+      select: { category: true, currency: true, amount: true },
+    });
+    const groups = new Map<
+      string,
+      {
+        category: (typeof expenses)[number]['category'];
+        currency: Currency;
+        total: Prisma.Decimal;
+      }
+    >();
+    for (const expense of expenses) {
+      const key = `${expense.category}:${expense.currency}`;
+      groups.set(key, {
+        category: expense.category,
+        currency: expense.currency,
+        total: (groups.get(key)?.total ?? new Decimal('0')).plus(
+          expense.amount,
+        ),
+      });
+    }
+    return [...groups.values()]
+      .sort((a, b) =>
+        `${a.currency}:${a.category}`.localeCompare(
+          `${b.currency}:${b.category}`,
+        ),
+      )
+      .map((group) => ({ ...group, total: group.total.toFixed(2) }));
+  }
+
+  async spendingPace(input: SpendingPaceDto, effectiveDate?: Date) {
+    const dto = plainToInstance(SpendingPaceDto, input);
+    this.validate(dto);
+    const now = effectiveDate ?? this.currentDate();
+    const year = Number(dto.year),
+      month = Number(dto.month);
+    const from = new Date(0);
+    from.setUTCFullYear(year, month - 1, 1);
+    const until = new Date(from);
+    until.setUTCMonth(until.getUTCMonth() + 1);
+    const daysInMonth = new Date(until.getTime() - 1).getUTCDate();
+    const today = new Date(now);
+    today.setUTCHours(0, 0, 0, 0);
+    const status =
+      from > today ? 'future' : until <= today ? 'past' : 'current';
+    const daysElapsed =
+      status === 'future'
+        ? 0
+        : status === 'past'
+          ? daysInMonth
+          : today.getUTCDate();
+    const end = status === 'current' ? new Date(today) : until;
+    if (status === 'current') end.setUTCDate(end.getUTCDate() + 1);
+    const totals = { EUR: new Decimal('0'), BRL: new Decimal('0') };
+    if (daysElapsed) {
+      const expenses = await this.prisma.expense.findMany({
+        where: {
+          transactionDate: { gte: from, lt: end },
+          ...(dto.currency ? { currency: dto.currency } : {}),
+          ...(dto.category != null ? { category: dto.category } : {}),
+          ...(dto.merchant != null
+            ? { merchant: merchantFilter(dto.merchant) }
+            : {}),
+        },
+        select: { amount: true, currency: true },
+      });
+      for (const expense of expenses)
+        totals[expense.currency] = totals[expense.currency].plus(
+          expense.amount,
+        );
+    }
+    const currencies = dto.currency
+      ? [dto.currency]
+      : [Currency.EUR, Currency.BRL];
+    return {
+      period: {
+        year,
+        month,
+        effectiveDate:
+          status === 'future'
+            ? null
+            : new Date(end.getTime() - 1).toISOString().slice(0, 10),
+        daysElapsed,
+        daysInMonth,
+        status,
+      },
+      merchant: dto.merchant ?? null,
+      results: currencies.map((currency) => {
+        const total = totals[currency];
+        const daily = daysElapsed ? total.div(String(daysElapsed)) : null;
+        return {
+          currency,
+          spentToDate: total.toFixed(2),
+          dailyAverage: daily?.toFixed(2) ?? null,
+          weeklyAverage: daily?.mul('7').toFixed(2) ?? null,
+          projectedMonthTotal:
+            status === 'past'
+              ? total.toFixed(2)
+              : (daily?.mul(String(daysInMonth)).toFixed(2) ?? null),
+        };
+      }),
+    };
+  }
 
   async monthlySummary(input: MonthlySummaryDto) {
     const dto = plainToInstance(MonthlySummaryDto, input);

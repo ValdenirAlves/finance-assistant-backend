@@ -3,6 +3,7 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { plainToInstance } from 'class-transformer';
 import { validateSync } from 'class-validator';
@@ -12,10 +13,28 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import { CreateExpenseDto } from './dto/create-expense.dto.js';
 import { FilterExpensesDto } from './dto/filter-expenses.dto.js';
 import { parseDateRange } from '../common/date-range.js';
+import { merchantFilter } from '../common/merchant-filter.js';
+import { CategoriesService } from '../categories/categories.service.js';
+import { ExpenseCategory } from '../generated/prisma/enums.js';
 
 @Injectable()
 export class ExpensesService {
-  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
+  constructor(
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Optional()
+    @Inject(CategoriesService)
+    private readonly categories?: CategoriesService,
+  ) {}
+  async categoryFor(merchant?: string | null) {
+    return this.categories?.lookup(merchant) ?? null;
+  }
+  async learnCategory(
+    merchant: string | null | undefined,
+    category: ExpenseCategory,
+    tx: Prisma.TransactionClient,
+  ) {
+    await this.categories?.learn(merchant, category, tx);
+  }
 
   validateCreate(input: CreateExpenseDto) {
     const dto = plainToInstance(CreateExpenseDto, input);
@@ -37,6 +56,9 @@ export class ExpensesService {
       throw new BadRequestException('transactionDate must be a valid date');
     }
     return {
+      payer: dto.payer ?? null,
+      paymentMethod: dto.paymentMethod ?? null,
+      category: dto.category ?? ExpenseCategory.OTHER,
       amount,
       currency: dto.currency,
       transactionDate,
@@ -50,8 +72,62 @@ export class ExpensesService {
     transaction?: Prisma.TransactionClient,
   ) {
     const data = this.validateCreate(input);
-    const expense = await (transaction ?? this.prisma).expense.create({ data });
+    if (!transaction)
+      data.category = (await this.categoryFor(input.merchant)) ?? data.category;
+    if (!data.payer)
+      throw new BadRequestException(
+        'Specify payer SELF or SPOUSE before saving',
+      );
+    const debit =
+      data.payer === 'SELF' &&
+      (data.paymentMethod === 'CARD' || data.paymentMethod === 'BANK_ACCOUNT');
+    const save = async (tx: Prisma.TransactionClient) => {
+      if (debit) {
+        const changed = await tx.bankAccount.updateMany({
+          where: { owner: 'SELF', currency: data.currency },
+          data: { currentBalance: { decrement: data.amount } },
+        });
+        if (changed.count !== 1)
+          throw new BadRequestException(
+            `Set your ${data.currency} bank balance before saving a SELF expense`,
+          );
+      }
+      return tx.expense.create({ data });
+    };
+    const expense = transaction
+      ? await save(transaction)
+      : debit
+        ? await this.prisma.$transaction(save)
+        : await this.prisma.expense.create({ data });
     return this.serialize(expense);
+  }
+
+  async findPotentialDuplicate(
+    input: CreateExpenseDto,
+    transaction?: Prisma.TransactionClient,
+  ) {
+    const data = this.validateCreate(input);
+    const start = new Date(data.transactionDate);
+    start.setUTCHours(0, 0, 0, 0);
+    const end = new Date(start);
+    end.setUTCDate(end.getUTCDate() + 1);
+    // Escape LIKE metacharacters even for case-insensitive equality.
+    const merchant =
+      data.merchant === null
+        ? null
+        : {
+            equals: data.merchant.replace(/[\\%_]/g, '\\$&'),
+            mode: 'insensitive' as const,
+          };
+    return (transaction ?? this.prisma).expense.findFirst({
+      where: {
+        amount: data.amount,
+        currency: data.currency,
+        merchant,
+        transactionDate: { gte: start, lt: end },
+      },
+      orderBy: { id: 'asc' },
+    });
   }
 
   async findAll(input: FilterExpensesDto = {}) {
@@ -70,11 +146,11 @@ export class ExpensesService {
       filters.to ?? undefined,
     );
     const where: Prisma.ExpenseWhereInput = {};
+    if (filters.category) where.category = filters.category;
     if (filters.currency) where.currency = filters.currency;
     if (filters.merchant !== undefined && filters.merchant !== null) {
       // Escape PostgreSQL LIKE wildcards so the search treats input as literal text.
-      const contains = filters.merchant.replace(/[\\%_]/g, '\\$&');
-      where.merchant = { contains, mode: 'insensitive' };
+      where.merchant = merchantFilter(filters.merchant);
     }
     if (from || to) {
       where.transactionDate = {
@@ -96,6 +172,6 @@ export class ExpensesService {
   }
 
   private serialize(expense: Expense) {
-    return { ...expense, amount: expense.amount.toFixed(4) };
+    return { ...expense, amount: expense.amount.toFixed(2) };
   }
 }
